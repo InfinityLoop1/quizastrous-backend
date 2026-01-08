@@ -9,107 +9,113 @@ const PORT = process.env.PORT || 3000
 app.use(cors({ origin: '*' }))
 app.use(express.json())
 
-// --- Question bank ---
+
 const questionBank = [
-  { text: "2 + 2 = ?", options: ["3", "4", "5"], correct: "4" },
-  { text: "Capital of France?", options: ["Berlin", "Paris", "Rome"], correct: "Paris" },
-  { text: "Which is a programming language?", options: ["Python", "Snake", "Lion"], correct: "Python" },
+    { text: "2 + 2 = ?", options: ["3", "4", "5"], correct: "4" },
+    { text: "Capital of France?", options: ["Berlin", "Paris", "Rome"], correct: "Paris" },
+    { text: "Which is a programming language?", options: ["Python", "Snake", "Lion"], correct: "Python" },
 ]
 
-// --- Round state ---
-const round = {
-  players: {},
-  disaster: 0,
-  currentQuestionIndex: 0,
-  currentQuestionStart: Date.now(),
+
+const players = {}
+let disaster = 0
+
+
+const QUESTION_DURATION = 20
+const ROUND_DURATION = 10 * 60
+const INTERMISSION_DURATION = 5 * 60
+const ROUND_INTERVAL = ROUND_DURATION + INTERMISSION_DURATION
+
+
+function getRoundInfo() {
+    const now = new Date()
+    const utc = now.getTime()
+    const quarterStart = Math.floor(utc / (15 * 60 * 1000)) * 15 * 60 * 1000
+    const elapsed = (utc - quarterStart) / 1000
+
+    const inIntermission = elapsed >= ROUND_DURATION
+    const roundNumber = Math.floor(utc / (15 * 60 * 1000)) + 1
+
+    const questionIndex = inIntermission
+        ? null
+        : Math.floor(elapsed / QUESTION_DURATION) % questionBank.length
+
+    const timeLeft = inIntermission
+        ? ROUND_INTERVAL - elapsed
+        : ROUND_DURATION - elapsed
+
+    return { roundNumber, inIntermission, questionIndex, timeLeft }
 }
 
-// --- Helper to get safe question for clients ---
 function getCurrentQuestion() {
-  const q = questionBank[round.currentQuestionIndex]
-  return { text: q.text, options: q.options }
+    const info = getRoundInfo()
+    if (info.inIntermission) return null
+    const q = questionBank[info.questionIndex]
+    return { text: q.text, options: q.options }
 }
 
-// --- Broadcast state to all WebSocket clients ---
 function broadcastState(wss) {
-  const state = {
-    players: round.players,
-    disaster: round.disaster,
-    currentQuestion: getCurrentQuestion(),
-    currentQuestionStart: round.currentQuestionStart
-  }
-  const msg = JSON.stringify({ type: 'state', data: state })
-  wss.clients.forEach(client => {
-    if (client.readyState === 1) client.send(msg)
-  })
+    const state = getRoundInfo()
+    state.players = players
+    state.disaster = disaster
+    state.currentQuestion = getCurrentQuestion()
+    const msg = JSON.stringify({ type: 'state', data: state })
+    wss.clients.forEach(client => {
+        if (client.readyState === 1) client.send(msg)
+    })
 }
 
-// --- Rotate question every 20 seconds ---
-let wss
-setInterval(() => {
-  round.currentQuestionIndex = (round.currentQuestionIndex + 1) % questionBank.length
-  round.currentQuestionStart = Date.now()
-  for (const pid in round.players) round.players[pid].answeredCurrent = false
-  if (wss) broadcastState(wss)
-}, 20000)
 
-// --- HTTP routes ---
-app.get('/', (req, res) => res.send('Server running!'))
+app.get('/', (req, res) => res.send('Quizastrous backend running!'))
 
 app.post('/join', (req, res) => {
-  const { name } = req.body
-  if (!name) return res.status(400).json({ error: 'Name required' })
-
-  const playerId = crypto.randomUUID()
-  round.players[playerId] = { name, score: 0, answeredCurrent: false }
-
-  // send initial state along with playerId
-  const state = {
-    players: round.players,
-    disaster: round.disaster,
-    currentQuestion: getCurrentQuestion(),
-    currentQuestionStart: round.currentQuestionStart
-  }
-
-  res.json({ playerId, state })
-  if (wss) broadcastState(wss)
+    const { name } = req.body
+    const playerId = crypto.randomUUID()
+    players[playerId] = { name, score: 0, answeredCurrent: false }
+    res.json({ playerId })
+    broadcastState(wss)
 })
 
 app.post('/answer', (req, res) => {
-  const { playerId, answer } = req.body
-  const player = round.players[playerId]
-  if (!player) return res.status(400).json({ error: 'Invalid playerId' })
-  if (player.answeredCurrent) return res.status(400).json({ error: 'Already answered' })
+    const { playerId, answer } = req.body
+    const info = getRoundInfo()
+    if (info.inIntermission) return res.json({ success: false, error: "Intermission" })
 
-  player.answeredCurrent = true
-  const correct = answer === questionBank[round.currentQuestionIndex].correct
-  if (correct) player.score += 1
-  else round.disaster += 1
-
-  if (wss) broadcastState(wss)
-  res.json({ success: true })
+    const player = players[playerId]
+    if (player && !player.answeredCurrent) {
+        player.answeredCurrent = true
+        const correct = answer === questionBank[info.questionIndex].correct
+        if (correct) player.score += 1
+        else disaster += 1
+        broadcastState(wss)
+    }
+    res.json({ success: true })
 })
 
-// --- Start server and WebSocket ---
-const server = app.listen(PORT, () => console.log(`Quizastrous backend listening on ${PORT}`))
-wss = new WebSocketServer({ noServer: true })
 
-server.on('upgrade', (request, socket, head) => {
-  wss.handleUpgrade(request, socket, head, ws => {
-    wss.emit('connection', ws, request)
-    // send initial state to new connection
-    ws.send(JSON.stringify({
-      type: 'state',
-      data: {
-        players: round.players,
-        disaster: round.disaster,
-        currentQuestion: getCurrentQuestion(),
-        currentQuestionStart: round.currentQuestionStart
-      }
-    }))
-  })
+const server = app.listen(PORT, () => console.log(`Quizastrous backend on ${PORT}`))
+const wss = new WebSocketServer({ noServer: true })
+
+server.on('upgrade', (req, socket, head) => {
+    wss.handleUpgrade(req, socket, head, ws => {
+        wss.emit('connection', ws, req)
+
+        const info = getRoundInfo()
+        ws.send(JSON.stringify({
+            type: 'state',
+            data: {
+                players,
+                disaster,
+                currentQuestion: getCurrentQuestion(),
+                roundNumber: info.roundNumber,
+                inIntermission: info.inIntermission,
+                timeLeft: info.timeLeft
+            }
+        }))
+    })
 })
 
-wss.on('connection', ws => {
-  console.log('WebSocket connected')
-})
+wss.on('connection', ws => console.log('WebSocket connected'))
+
+
+setInterval(() => broadcastState(wss), 1000)
