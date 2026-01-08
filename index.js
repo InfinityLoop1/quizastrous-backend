@@ -1,28 +1,26 @@
+// index.js
 const express = require('express')
 const cors = require('cors')
-const app = express()()
+
+const app = express()       // <- make sure you only do this once
 const PORT = process.env.PORT || 3000
 
-// allow requests from your frontend
-app.use(cors({
-    origin: 'http://127.0.0.1:8080',  // only allow your local frontend
-    methods: ['GET', 'POST', 'OPTIONS'],
-    credentials: true
-}))
-
+// middleware
+app.use(cors({ origin: '*' }))  // allow all origins for dev
 app.use(express.json())
 
+// test route
+app.get('/', (req, res) => {
+  res.send('Server is running!')
+})
+
+// your join route
 app.post('/join', (req, res) => {
-    // your join logic
-    res.json({ success: true })
+  // for now, just respond with success
+  res.json({ success: true, body: req.body })
 })
 
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`))
-
-
-// rest of your routes
-
-
 
 
 // --- CORS middleware for cross-domain frontend ---
