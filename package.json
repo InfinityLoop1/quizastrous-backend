@@ -19,6 +19,7 @@
   },
   "homepage": "https://github.com/InfinityLoop1/quizastrous#readme",
   "dependencies": {
+    "cors": "^2.8.5",
     "express": "^5.2.1",
     "ws": "^8.19.0"
   }
