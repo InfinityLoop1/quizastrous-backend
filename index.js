@@ -22,7 +22,6 @@ app.post('/join', (req, res) => {
   res.json({ success: true, body: req.body })
 })
 
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`))
 
 
 // --- CORS middleware for cross-domain frontend ---
