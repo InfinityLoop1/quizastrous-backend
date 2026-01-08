@@ -7,6 +7,15 @@ app.use(express.json())
 
 const PORT = process.env.PORT || 3000
 
+// --- CORS middleware for cross-domain frontend ---
+app.use((req, res, next) => {
+  res.setHeader("Access-Control-Allow-Origin", "*") // change '*' to your frontend URL for security
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type")
+  if (req.method === "OPTIONS") return res.sendStatus(204)
+  next()
+})
+
 // --- Game state ---
 const questionBank = [
   { text: "2 + 2 = ?", options: ["3", "4", "5"], correct: "4" },
@@ -48,7 +57,7 @@ setInterval(() => {
   if (elapsed >= 20000) { // 20s per question
     round.currentQuestionIndex = (round.currentQuestionIndex + 1) % questionBank.length
     round.currentQuestionStart = Date.now()
-    // reset players for new question
+    // reset answeredCurrent for all players
     for (const pid in round.players) round.players[pid].answeredCurrent = false
     broadcastState()
   }
@@ -77,7 +86,7 @@ app.post("/answer", (req, res) => {
 })
 
 // --- WebSocket upgrade ---
-const server = app.listen(PORT, () => console.log(`Quizastrous server listening on ${PORT}`))
+const server = app.listen(PORT, () => console.log(`Quizastrous backend listening on ${PORT}`))
 server.on("upgrade", (request, socket, head) => {
   wss.handleUpgrade(request, socket, head, ws => {
     wss.emit("connection", ws, request)
