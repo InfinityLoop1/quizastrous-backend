@@ -5,6 +5,16 @@ const crypto = require("crypto")
 const app = express()
 app.use(express.json())
 
+const cors = require('cors')
+
+app.use(cors({
+  origin: 'http://127.0.0.1:8080', // allow only your frontend
+  methods: ['GET','POST']
+}))
+
+// rest of your routes
+
+
 const PORT = process.env.PORT || 3000
 
 // --- CORS middleware for cross-domain frontend ---
