@@ -97,7 +97,7 @@ function getCurrentQuestion() {
 function broadcastState(wss) {
     const state = getRoundInfo()
     state.players = players
-    state.disaster = disasterMeter
+    state.disasterMeter = disasterMeter
     state.currentQuestion = getCurrentQuestion()
     const msg = JSON.stringify({ type: 'state', data: state })
     wss.clients.forEach(client => {
@@ -139,7 +139,7 @@ server.on('upgrade', (req, socket, head) => {
             type: 'state',
             data: {
                 players,
-                disaster,
+                disasterMeter,
                 currentQuestion: getCurrentQuestion(),
                 roundNumber: info.roundNumber,
                 inIntermission: info.inIntermission,
