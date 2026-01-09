@@ -45,6 +45,7 @@ function getRoundInfo() {
     const quarterStart = Math.floor(utc / (15 * 60 * 1000)) * 15 * 60 * 1000
     const elapsed = (utc - quarterStart) / 1000
 
+
     let inIntermission;
     if (elapsed >= ROUND_DURATION) {
         inIntermission = true;
@@ -52,15 +53,13 @@ function getRoundInfo() {
         inIntermission = false;
     }
 
+    const roundNumber = Math.floor(utc / (15 * 60 * 1000)) + 1;
+
     let questionIndex = null;
     if (!inIntermission) {
         const slot = Math.floor(elapsed / QUESTION_DURATION);
         const seed = slot + roundNumber * 1000;
-        function getRoundInfo() {
-            // ai gave me these weird ass numbers
-            return ((s * 9301 + 49297) % 233280) / 233280;
-        }
-        questionIndex = Math.floor(seededRandom(seed) * questionBank.length);
+        questionIndex = Math.floor((((seed * 9301 + 49297) % 233280) / 233280) * questionBank.length);
     }
 
     let timeLeft;
@@ -85,7 +84,7 @@ function getRoundInfo() {
         }
     }
 
-    return { inIntermission, questionIndex, timeLeft, phase, phaseTimeLeft }
+    return { inIntermission, questionIndex, timeLeft, phase, phaseTimeLeft, roundNumber }
 }
 
 function getCurrentQuestion() {
