@@ -103,7 +103,6 @@ function broadcastState(wss) {
     wss.clients.forEach(client => {
         if (client.readyState === 1) client.send(msg)
     })
-    return { inIntermission, questionIndex, timeLeft, phase, phaseTimeLeft }
 }
 
 app.get('/', (req, res) => res.send('Quizastrous backend running!'))
