@@ -71,7 +71,7 @@ function getRoundInfo() {
     let phase = 'intermission';
     let phaseTimeLeft = 0;
     if (!inIntermission) {
-        const roundElapsed = elapsed % ROUND_DURATION;
+        const roundElapsed = elapsed % (QUESTION_DURATION + LEADERBOARD_DURATION);
         if (roundElapsed < QUESTION_READ_DURATION) {
             phase = 'reading';
             phaseTimeLeft = QUESTION_READ_DURATION - roundElapsed;
@@ -80,7 +80,7 @@ function getRoundInfo() {
             phaseTimeLeft = QUESTION_READ_DURATION + QUESTION_ANSWER_DURATION - roundElapsed;
         } else {
             phase = 'leaderboard';
-            phaseTimeLeft = ROUND_DURATION - roundElapsed;
+            phaseTimeLeft = QUESTION_READ_DURATION + QUESTION_ANSWER_DURATION + LEADERBOARD_DURATION - roundElapsed;
         }
     }
 
