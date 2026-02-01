@@ -1,10 +1,13 @@
 const express = require('express')
+const cors = require('cors')
+
 const { WebSocketServer } = require('ws')
 const WebSocket = require('ws')
 
-
-
 const app = express()
+app.use(cors())
+app.use(express.json())
+
 const PORT = 3000
 const players = {}
 
@@ -42,7 +45,7 @@ function startGame() {
     state.mode = 'game'
     state.gameEndsAt = Date.now() + 10 * 60 * 1000
     startQuestion()
-    broadcastState()
+
 }
 
 function startQuestion() {
@@ -96,7 +99,7 @@ function advancePhase() {
                 if (players[name].answer?.trim().toLowerCase() === correct.toLowerCase()) {
                     players[name].score += 1
                 }
-                // reset answer for next round
+                
                 players[name].answer = null
             }
 
@@ -138,6 +141,7 @@ setInterval(() => {
     if (Date.now() >= state.phaseEndsAt) {
         advancePhase()
     }
+        broadcastState()
 }, 100)
 
 
@@ -155,7 +159,7 @@ const wss = new WebSocketServer({ server })
 wss.on('connection', (ws) => {
     clients.add(ws)
 
-    // send state immediately on connect
+    
     ws.send(JSON.stringify({
         type: 'state',
         data: state
@@ -191,7 +195,7 @@ app.post('/join', (req, res) => {
 
     players[name] = { score: 0, answer: null }
 
-    broadcastState() // everyone sees new player
+    broadcastState() 
 
     res.json({ success: true, name })
 })
