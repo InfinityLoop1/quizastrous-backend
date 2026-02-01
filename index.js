@@ -1,182 +1,215 @@
 const express = require('express')
-const cors = require('cors')
 const { WebSocketServer } = require('ws')
-const crypto = require('crypto')
+const WebSocket = require('ws')
+
+
 
 const app = express()
-const PORT = process.env.PORT || 3000
+const PORT = 3000
+const players = {}
 
-app.use(cors({ origin: '*' }))
-app.use(express.json())
 
 const questionBank = [
-    { text: "2 + 2 = ?", options: ["3", "4", "5"], correct: "4" },
-    { text: "Capital of France?", options: ["Berlin", "Paris", "Rome"], correct: "Paris" },
-    { text: "Which is a programming language?", options: ["Python", "Snake", "Lion"], correct: "Python" },
+    { text: '2 + 2 = ?', correct: '4' },
+    { text: 'capital of france ?', correct: 'paris' },
+    { text: 'which is a programming language ?', correct: 'python' }
 ]
 
-/*
-ROUND 10m [
-    QUESTION [
-        READING PHASE 10s
-        ANSWERING PHASE 10s
-    ]
-    LEADERBOARD PHASE 5s
-]
-INTERMISSION 5m
-*/
 
-const players = {}
-let answerSubmissions = {}
-let disasterMeter = 0
+const PHASES = {
+    READING: 'reading',
+    ANSWERING: 'answering',
+    LEADERBOARD: 'leaderboard'
+}
 
-const QUESTION_READ_DURATION = 10
-const QUESTION_ANSWER_DURATION = 10
-const QUESTION_DURATION = QUESTION_READ_DURATION + QUESTION_ANSWER_DURATION
-const LEADERBOARD_DURATION = 5
-const ROUND_DURATION = 10 * 60
-const INTERMISSION_DURATION = 5 * 60
-const ROUND_INTERVAL = ROUND_DURATION + INTERMISSION_DURATION
+const clients = new Set()
 
+let state = {
+    mode: 'waiting',
+    phase: null,
+    phaseEndsAt: 0,
+    gameEndsAt: 0,
+    currentQuestion: null
+}
 
-function getRoundInfo() {
-    const now = new Date()
-    const utc = now.getTime()
-    const quarterStart = Math.floor(utc / (15 * 60 * 1000)) * 15 * 60 * 1000
-    const elapsed = (utc - quarterStart) / 1000
+function nextQuarterHour() {
+    const now = Date.now()
+    return Math.ceil(now / (15 * 60 * 1000)) * 15 * 60 * 1000
+}
 
+function startGame() {
+    console.log('game started')
+    state.mode = 'game'
+    state.gameEndsAt = Date.now() + 10 * 60 * 1000
+    startQuestion()
+    broadcastState()
+}
 
-    let inIntermission;
-    if (elapsed >= ROUND_DURATION) {
-        inIntermission = true;
-    } else {
-        inIntermission = false;
+function startQuestion() {
+    const q = questionBank[Math.floor(Math.random() * questionBank.length)]
+    const words = q.text.split(' ').length
+    const readingMs = words * 100
+
+    state.currentQuestion = q
+    state.phase = PHASES.READING
+    state.phaseEndsAt = Date.now() + readingMs
+
+    for (const name in players) {
+        players[name].answer = null
     }
 
-    const roundNumber = Math.floor(utc / (15 * 60 * 1000)) + 1;
 
-    let questionIndex = null;
-    if (!inIntermission) {
-        const slot = Math.floor(elapsed / QUESTION_DURATION);
-        const seed = slot + roundNumber * 1000;
-        questionIndex = Math.floor((((seed * 9301 + 49297) % 233280) / 233280) * questionBank.length);
-    }
+    console.log('reading:', q.text)
 
-    let timeLeft;
-    if (inIntermission) {
-        timeLeft = ROUND_INTERVAL - elapsed;
-    } else {
-        timeLeft = ROUND_DURATION - elapsed;
+
+    broadcastState()
+}
+
+function advancePhase() {
+
+    if (state.mode === 'waiting') {
+        startGame()
+        return
     }
-    let phase = 'intermission';
-    let phaseTimeLeft = 0;
-    if (!inIntermission) {
-        const roundElapsed = elapsed % (QUESTION_DURATION + LEADERBOARD_DURATION);
-        if (roundElapsed < QUESTION_READ_DURATION) {
-            phase = 'reading';
-            phaseTimeLeft = QUESTION_READ_DURATION - roundElapsed;
-        } else if (roundElapsed < QUESTION_READ_DURATION + QUESTION_ANSWER_DURATION) {
-            phase = 'answering';
-            phaseTimeLeft = QUESTION_READ_DURATION + QUESTION_ANSWER_DURATION - roundElapsed;
-        } else {
-            phase = 'leaderboard';
-            phaseTimeLeft = QUESTION_READ_DURATION + QUESTION_ANSWER_DURATION + LEADERBOARD_DURATION - roundElapsed;
+    if (state.mode === 'game') {
+        if (Date.now() >= state.gameEndsAt) {
+            startIntermission()
+            broadcastState()
+            return
+        }
+
+        if (state.phase === PHASES.READING) {
+            state.phase = PHASES.ANSWERING
+            state.phaseEndsAt = Date.now() + 5000
+            console.log('answering')
+            broadcastState()
+            return
+        }
+
+        if (state.phase === PHASES.ANSWERING) {
+            state.phase = PHASES.LEADERBOARD
+            state.phaseEndsAt = Date.now() + 5000
+            console.log('leaderboard')
+
+            const correct = state.currentQuestion.correct
+            for (const name in players) {
+                if (players[name].answer?.trim().toLowerCase() === correct.toLowerCase()) {
+                    players[name].score += 1
+                }
+                // reset answer for next round
+                players[name].answer = null
+            }
+
+            broadcastState()
+            return
+        }
+
+
+        if (state.phase === PHASES.LEADERBOARD) {
+            startQuestion()
+            return
         }
     }
 
-    return { inIntermission, questionIndex, timeLeft, phase, phaseTimeLeft, roundNumber }
+    if (state.mode === 'intermission') {
+        scheduleNextGame()
+    }
+
 }
 
-function getCurrentQuestion() {
-    const info = getRoundInfo()
-    if (info.inIntermission) return null
-    const q = questionBank[info.questionIndex]
-    return { text: q.text, options: q.options }
+function startIntermission() {
+    console.log('intermission')
+    state.mode = 'intermission'
+    state.phase = null
+    state.phaseEndsAt = Date.now() + 5 * 60 * 1000
+    broadcastState()
 }
 
-function broadcastState(wss) {
-    const state = getRoundInfo()
-    state.players = players
-    state.disasterMeter = disasterMeter
-    state.currentQuestion = getCurrentQuestion()
-    const msg = JSON.stringify({ type: 'state', data: state })
-    wss.clients.forEach(client => {
-        if (client.readyState === 1) client.send(msg)
+function scheduleNextGame() {
+    const startAt = nextQuarterHour()
+    console.log('next game at', new Date(startAt).toLocaleTimeString())
+
+    state.mode = 'waiting'
+    state.phase = null
+    state.phaseEndsAt = startAt
+}
+
+setInterval(() => {
+    if (Date.now() >= state.phaseEndsAt) {
+        advancePhase()
+    }
+}, 100)
+
+
+app.get('/state', (req, res) => {
+    res.json(state)
+})
+
+const server = app.listen(PORT, () => {
+    console.log('server up')
+    scheduleNextGame()
+})
+
+const wss = new WebSocketServer({ server })
+
+wss.on('connection', (ws) => {
+    clients.add(ws)
+
+    // send state immediately on connect
+    ws.send(JSON.stringify({
+        type: 'state',
+        data: state
+    }))
+
+    ws.on('close', () => {
+        clients.delete(ws)
     })
+})
+
+function broadcastState() {
+    const payload = JSON.stringify({
+        type: 'state',
+        data: {
+            ...state,
+            players
+        }
+    })
+
+    for (const ws of clients) {
+        if (ws.readyState === WebSocket.OPEN) {
+            ws.send(payload)
+        }
+    }
 }
 
-app.get('/', (req, res) => res.send('Quizastrous backend running!'))
 
 app.post('/join', (req, res) => {
     const { name } = req.body
-    const playerId = crypto.randomUUID()
-    players[playerId] = { name, score: 0, answeredCurrent: false }
-    res.json({ playerId })
-    broadcastState(wss)
+    if (!name) return res.status(400).json({ error: 'missing name' })
+
+    if (players[name]) return res.status(400).json({ error: 'name taken' })
+
+    players[name] = { score: 0, answer: null }
+
+    broadcastState() // everyone sees new player
+
+    res.json({ success: true, name })
 })
 
+
 app.post('/answer', (req, res) => {
-    const { playerId, answer } = req.body
-    const info = getRoundInfo()
-    if (info.inIntermission) return res.json({ success: false, error: "Intermission" })
-    if (info.phase !== 'answering') return res.json({ success: false, error: "Not in answering phase" })
+    const { name, answer } = req.body
+    if (!name || !answer) return res.status(400).json({ error: 'missing data' })
 
-    if (!answerSubmissions[info.questionIndex]) answerSubmissions[info.questionIndex] = {}
-    answerSubmissions[info.questionIndex][playerId] = answer
+    if (!players[name]) return res.status(400).json({ error: 'player not found' })
 
+    if (state.mode !== 'game' || state.phase !== PHASES.ANSWERING) {
+        return res.status(400).json({ error: 'not accepting answers now' })
+    }
+
+    players[name].answer = answer
     res.json({ success: true })
 })
 
-const server = app.listen(PORT, () => console.log(`Quizastrous backend on ${PORT}`))
-const wss = new WebSocketServer({ noServer: true })
-
-server.on('upgrade', (req, socket, head) => {
-    wss.handleUpgrade(req, socket, head, ws => {
-        wss.emit('connection', ws, req)
-
-        const info = getRoundInfo()
-        ws.send(JSON.stringify({
-            type: 'state',
-            data: {
-                players,
-                disasterMeter,
-                currentQuestion: getCurrentQuestion(),
-                roundNumber: info.roundNumber,
-                inIntermission: info.inIntermission,
-                timeLeft: info.timeLeft
-            }
-        }))
-    })
-})
-
-wss.on('connection', ws => console.log('WebSocket connected'))
 
 
-setInterval(() => broadcastState(wss), 1000)
-
-setInterval(() => {
-    const info = getRoundInfo()
-    if (info.phase === 'leaderboard') {
-        const qIdx = info.questionIndex;
-        if (answerSubmissions[qIdx]) {
-            for (const playerId in answerSubmissions[qIdx]) {
-                const player = players[playerId];
-                if (player && !player.answeredCurrent) {
-                    const answer = answerSubmissions[qIdx][playerId];
-                    const correct = answer === questionBank[qIdx].correct;
-                    if (correct) {
-                        player.score += 1;
-                    } else {
-                        disasterMeter += 1;
-                    }
-                    player.answeredCurrent = true;
-                }
-            }
-            delete answerSubmissions[qIdx];
-            broadcastState(wss);
-        }
-        for (const playerId in players) {
-            players[playerId].answeredCurrent = false;
-        }
-    }
-}, 1000);
